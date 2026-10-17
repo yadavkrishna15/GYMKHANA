@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { LogIn, Key, Mail, ShieldAlert, Sparkles } from 'lucide-react';
+import { LogIn, Key, Mail, ShieldAlert } from 'lucide-react';
 import { FormInput } from '../../components/ui/FormControls';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
@@ -67,12 +67,6 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillDemo = (email, password) => {
-    setFormData({ email, password });
-    setErrors({});
-    setServerError('');
   };
 
   return (
@@ -145,45 +139,6 @@ export default function Login() {
             </Link>
           </div>
         </Card>
-
-        {/* Viva Quick Test Credentials Panel */}
-        <div style={{
-          marginTop: '1.5rem',
-          padding: '1.25rem',
-          backgroundColor: '#12151B',
-          border: '1px dashed var(--border-subtle)',
-          borderRadius: 'var(--radius-lg)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <Sparkles size={16} style={{ color: 'var(--accent-primary)' }} />
-            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Viva Demo Credentials (Quick Autofill)
-            </span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => fillDemo('admin@gymkhana.com', 'Admin@123')}
-            >
-              Admin
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => fillDemo('trainer@gymkhana.com', 'Trainer@123')}
-            >
-              Trainer
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => fillDemo('member1@gymkhana.com', 'Member@123')}
-            >
-              Member
-            </Button>
-          </div>
-        </div>
       </div>
     </div>
   );
