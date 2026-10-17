@@ -5,6 +5,7 @@ import {
   updateMember,
   getTrainersList,
   updateTrainer,
+  createTrainer,
 } from '../controllers/adminController.js';
 import { authenticateToken, requireRole } from '../middleware/auth.js';
 
@@ -17,6 +18,7 @@ router.get('/stats', getAdminStats);
 router.get('/members', getMembersList);
 router.put('/members/:id', updateMember);
 router.get('/trainers', getTrainersList);
+router.post('/trainers', createTrainer);
 router.put('/trainers/:id', updateTrainer);
 
 export default router;

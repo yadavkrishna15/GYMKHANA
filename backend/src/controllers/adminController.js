@@ -1,3 +1,5 @@
+import bcrypt from 'bcryptjs';
+import User from '../models/User.js';
 import Member from '../models/Member.js';
 import Trainer from '../models/Trainer.js';
 import Exercise from '../models/Exercise.js';
@@ -5,6 +7,7 @@ import Equipment from '../models/Equipment.js';
 import WorkoutPlan from '../models/WorkoutPlan.js';
 import ContactMessage from '../models/ContactMessage.js';
 import Membership from '../models/Membership.js';
+import { getNextSequence } from '../models/Counter.js';
 import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
@@ -216,3 +219,72 @@ export async function updateTrainer(req, res) {
     return sendError(res, 'Failed to update trainer record', 'INTERNAL_ERROR', 500);
   }
 }
+
+export async function createTrainer(req, res) {
+  try {
+    const { full_name, email, phone, password, specialization, experience_years, bio, certifications } = req.body;
+
+    if (!full_name?.trim() || !email?.trim() || !password) {
+      return sendError(res, 'Name, email, and initial password are required', 'VALIDATION_ERROR', 400);
+    }
+
+    if (password.length < 6) {
+      return sendError(res, 'Password must be at least 6 characters long', 'VALIDATION_ERROR', 400);
+    }
+
+    const existing = await User.findOne({ email: email.trim().toLowerCase() });
+    if (existing) {
+      return sendError(res, 'An account with this email address already exists', 'DUPLICATE_EMAIL', 409);
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+
+    const nextUserId = await getNextSequence('users');
+    const newUser = await User.create({
+      id: nextUserId,
+      full_name: full_name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone?.trim() || null,
+      password_hash,
+      role: 'TRAINER',
+    });
+
+    const nextTrainerId = await getNextSequence('trainers');
+    const newTrainer = await Trainer.create({
+      id: nextTrainerId,
+      user_id: newUser.id,
+      user: newUser._id,
+      specialization: specialization?.trim() || 'General Fitness',
+      experience_years: parseInt(experience_years, 10) || 1,
+      bio: bio?.trim() || `Certified ${specialization || 'Fitness'} Coach at GYMKHANA.`,
+      certifications: certifications?.trim() || null,
+      availability_status: 'Available',
+    });
+
+    return sendSuccess(
+      res,
+      {
+        trainer: {
+          id: newTrainer.id,
+          _id: newTrainer._id,
+          full_name: newUser.full_name,
+          email: newUser.email,
+          phone: newUser.phone,
+          specialization: newTrainer.specialization,
+          experience_years: newTrainer.experience_years,
+          bio: newTrainer.bio,
+          certifications: newTrainer.certifications,
+          availability_status: newTrainer.availability_status,
+          assigned_count: 0,
+        },
+      },
+      'Coach created successfully',
+      201
+    );
+  } catch (error) {
+    console.error('createTrainer error:', error);
+    return sendError(res, 'Failed to create trainer record', 'INTERNAL_ERROR', 500);
+  }
+}
+

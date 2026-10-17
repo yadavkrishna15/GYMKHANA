@@ -80,7 +80,7 @@ export default function Login() {
             Sign In to GYMKHANA
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9375rem' }}>
-            Enter your credentials to enter your management dashboard.
+            Members, Coaches, and Administrators can sign in here to access their personalized dashboard.
           </p>
         </div>
 

@@ -22,7 +22,7 @@ function generateToken(user) {
 
 export async function register(req, res) {
   try {
-    const { full_name, email, phone, password } = req.body;
+    const { full_name, email, phone, password, role, specialization, experience_years, bio, certifications } = req.body;
 
     // 1. Validation
     if (!full_name || !full_name.trim()) {
@@ -49,31 +49,48 @@ export async function register(req, res) {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
-    // 4. Sequential ID for backwards compatibility
+    // 4. Determine role (default MEMBER)
+    const targetRole = role === 'TRAINER' ? 'TRAINER' : 'MEMBER';
+
+    // 5. Sequential ID for backwards compatibility
     const nextUserId = await getNextSequence('users');
 
-    // 5. Create user
+    // 6. Create user
     const newUser = await User.create({
       id: nextUserId,
       full_name: full_name.trim(),
       email: email.trim().toLowerCase(),
       phone: phone?.trim() || null,
       password_hash,
-      role: 'MEMBER',
+      role: targetRole,
     });
 
-    // 6. Initialize member record
-    const nextMemberId = await getNextSequence('members');
-    const today = new Date().toISOString().split('T')[0];
-    await Member.create({
-      id: nextMemberId,
-      user_id: newUser.id,
-      user: newUser._id,
-      membership_id: null,
-      trainer_id: null,
-      join_date: today,
-      status: 'ACTIVE',
-    });
+    if (targetRole === 'TRAINER') {
+      const nextTrainerId = await getNextSequence('trainers');
+      await Trainer.create({
+        id: nextTrainerId,
+        user_id: newUser.id,
+        user: newUser._id,
+        specialization: specialization?.trim() || 'General Fitness',
+        experience_years: parseInt(experience_years, 10) || 1,
+        bio: bio?.trim() || `Certified ${specialization || 'Fitness'} Coach at GYMKHANA.`,
+        certifications: certifications?.trim() || null,
+        availability_status: 'Available',
+      });
+    } else {
+      // Initialize member record
+      const nextMemberId = await getNextSequence('members');
+      const today = new Date().toISOString().split('T')[0];
+      await Member.create({
+        id: nextMemberId,
+        user_id: newUser.id,
+        user: newUser._id,
+        membership_id: null,
+        trainer_id: null,
+        join_date: today,
+        status: 'ACTIVE',
+      });
+    }
 
     const userObj = {
       id: newUser.id,
@@ -81,12 +98,12 @@ export async function register(req, res) {
       full_name: newUser.full_name,
       email: newUser.email,
       phone: newUser.phone,
-      role: 'MEMBER',
+      role: targetRole,
     };
 
     const token = generateToken(userObj);
 
-    return sendSuccess(res, { user: userObj, token }, 'Registration successful! Welcome to GYMKHANA.', 201);
+    return sendSuccess(res, { user: userObj, token }, `Registration successful! Welcome to GYMKHANA as ${targetRole === 'TRAINER' ? 'Coach' : 'Member'}.`, 201);
   } catch (error) {
     console.error('Registration Error:', error);
     return sendError(res, 'Server error during registration. Please try again.', 'INTERNAL_ERROR', 500);
