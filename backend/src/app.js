@@ -18,8 +18,9 @@ import { sendError } from './utils/response.js';
 
 const app = express();
 
-// CORS configuration (handles multiple origins and trailing slashes)
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+// CORS configuration (handles multiple origins, trailing slashes, and Vercel domains)
+const defaultOrigins = 'http://localhost:5173,https://gymkhana-one.vercel.app';
+const allowedOrigins = (process.env.CORS_ORIGIN || defaultOrigins)
   .split(',')
   .map((origin) => origin.trim().replace(/\/+$/, ''));
 
@@ -28,7 +29,12 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       const normalizedOrigin = origin ? origin.replace(/\/+$/, '') : origin;
-      if (!origin || allowedOrigins.includes(normalizedOrigin) || allowedOrigins.includes('*')) {
+      if (
+        !origin ||
+        allowedOrigins.includes(normalizedOrigin) ||
+        allowedOrigins.includes('*') ||
+        normalizedOrigin.endsWith('.vercel.app')
+      ) {
         callback(null, true);
       } else {
         callback(new Error('Blocked by CORS security policy'));
