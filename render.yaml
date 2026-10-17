@@ -17,17 +17,5 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         sync: false
-      - key: DATABASE_URL
+      - key: MONGODB_URI
         sync: false
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: "3306"
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_NAME
-        value: gymkhana_db
-      - key: DB_SSL
-        value: "true"

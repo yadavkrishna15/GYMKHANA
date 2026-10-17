@@ -1,39 +1,28 @@
-import mysql from 'mysql2/promise';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const poolConfig = process.env.DATABASE_URL
-  ? {
-      uri: process.env.DATABASE_URL,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      ssl: process.env.DB_SSL === 'false' ? undefined : { rejectUnauthorized: false },
-    }
-  : {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT, 10) || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'gymkhana_db',
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      ...(process.env.DB_SSL === 'true' ? { ssl: { rejectUnauthorized: false } } : {}),
-    };
+const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://localhost:27017/gymkhana_db';
 
-const pool = mysql.createPool(poolConfig);
+let isConnected = false;
 
-// Helper for queries with prepared statements
-export async function query(sql, params = []) {
+export async function connectDB() {
+  if (isConnected) return mongoose.connection;
+
   try {
-    const [results] = await pool.execute(sql, params);
-    return results;
+    const conn = await mongoose.connect(MONGODB_URI, {
+      autoIndex: true,
+    });
+    isConnected = true;
+    console.log(` MongoDB Connected Successfully: ${conn.connection.host}/${conn.connection.name}`);
+    return conn.connection;
   } catch (error) {
-    console.error('Database Query Error:', error.message);
-    throw error;
+    console.error(' MongoDB Connection Error:', error.message);
+    // Don't crash immediately in dev to allow health check / startup troubleshooting
+    return null;
   }
 }
 
-export default pool;
+// Export mongoose instance and connection
+export default mongoose;

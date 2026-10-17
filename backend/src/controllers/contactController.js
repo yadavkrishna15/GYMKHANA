@@ -1,4 +1,6 @@
-import { query } from '../config/db.js';
+import ContactMessage from '../models/ContactMessage.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function submitContactMessage(req, res) {
@@ -22,21 +24,19 @@ export async function submitContactMessage(req, res) {
       return sendError(res, 'Message must be at least 10 characters long', 'VALIDATION_ERROR', 400);
     }
 
-    const now = new Date();
-    const result = await query(
-      `INSERT INTO contact_messages (name, email, phone, subject, message, is_read, created_at)
-       VALUES (?, ?, ?, ?, ?, 0, ?)`,
-      [
-        name.trim(),
-        email.trim().toLowerCase(),
-        phone?.trim() || null,
-        subject.trim(),
-        message.trim(),
-        now,
-      ]
-    );
+    const nextId = await getNextSequence('contact_messages');
 
-    return sendSuccess(res, { id: result.insertId }, 'Message submitted successfully', 201);
+    const created = await ContactMessage.create({
+      id: nextId,
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone?.trim() || null,
+      subject: subject.trim(),
+      message: message.trim(),
+      is_read: 0,
+    });
+
+    return sendSuccess(res, { id: created.id || created._id }, 'Message submitted successfully', 201);
   } catch (error) {
     console.error('submitContactMessage error:', error);
     return sendError(res, 'Failed to submit contact message', 'INTERNAL_ERROR', 500);
@@ -45,7 +45,11 @@ export async function submitContactMessage(req, res) {
 
 export async function getContactMessages(req, res) {
   try {
-    const messages = await query('SELECT * FROM contact_messages ORDER BY id DESC');
+    const docs = await ContactMessage.find().sort({ id: -1, created_at: -1 }).lean();
+    const messages = docs.map((m) => ({
+      ...m,
+      id: m.id || m._id,
+    }));
     return sendSuccess(res, { messages });
   } catch (error) {
     console.error('getContactMessages error:', error);
@@ -58,7 +62,12 @@ export async function updateContactMessage(req, res) {
     const { id } = req.params;
     const { is_read } = req.body;
 
-    await query('UPDATE contact_messages SET is_read = ? WHERE id = ?', [is_read ? 1 : 0, id]);
+    await ContactMessage.findOneAndUpdate(
+      buildIdQuery(id),
+      { is_read: is_read ? 1 : 0 },
+      { returnDocument: 'after' }
+    );
+
     return sendSuccess(res, null, 'Message status updated');
   } catch (error) {
     console.error('updateContactMessage error:', error);
@@ -69,7 +78,7 @@ export async function updateContactMessage(req, res) {
 export async function deleteContactMessage(req, res) {
   try {
     const { id } = req.params;
-    await query('DELETE FROM contact_messages WHERE id = ?', [id]);
+    await ContactMessage.findOneAndDelete(buildIdQuery(id));
     return sendSuccess(res, null, 'Message deleted successfully');
   } catch (error) {
     console.error('deleteContactMessage error:', error);

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
-import { query } from '../config/db.js';
+import User from '../models/User.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendError } from '../utils/response.js';
 
 export async function authenticateToken(req, res, next) {
@@ -14,12 +15,13 @@ export async function authenticateToken(req, res, next) {
     const secret = process.env.JWT_SECRET || 'gymkhana_default_dev_secret_key';
     const decoded = jwt.verify(token, secret);
 
-    const rows = await query('SELECT id, full_name, email, phone, role FROM users WHERE id = ? LIMIT 1', [decoded.id]);
-    if (!rows || rows.length === 0) {
+    const user = await User.findOne(buildIdQuery(decoded.id)).lean();
+    if (!user) {
       return sendError(res, 'Invalid user session or user deleted', 'UNAUTHORIZED', 401);
     }
 
-    req.user = rows[0];
+    if (!user.id && user._id) user.id = user._id.toString();
+    req.user = user;
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {

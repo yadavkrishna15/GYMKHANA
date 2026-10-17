@@ -1,29 +1,45 @@
-import { query } from '../config/db.js';
+import Trainer from '../models/Trainer.js';
+import Member from '../models/Member.js';
+import WorkoutPlan from '../models/WorkoutPlan.js';
+import Attendance from '../models/Attendance.js';
+import Progress from '../models/Progress.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function getPublicTrainers(req, res) {
   try {
     const { specialization, search } = req.query;
-    let sql = `
-      SELECT t.id, t.specialization, t.experience_years, t.bio, t.certifications, t.availability_status,
-             u.full_name, u.email
-      FROM trainers t
-      JOIN users u ON t.user_id = u.id
-      WHERE 1=1
-    `;
-    const params = [];
+    const filter = {};
 
     if (specialization) {
-      sql += ' AND t.specialization = ?';
-      params.push(specialization);
-    }
-    if (search) {
-      sql += ' AND (u.full_name LIKE ? OR t.specialization LIKE ? OR t.bio LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      filter.specialization = specialization;
     }
 
-    sql += ' ORDER BY t.experience_years DESC';
-    const trainers = await query(sql, params);
+    let docs = await Trainer.find(filter).populate('user').sort({ experience_years: -1 }).lean();
+
+    if (search) {
+      const term = search.toLowerCase();
+      docs = docs.filter(
+        (t) =>
+          t.user?.full_name?.toLowerCase().includes(term) ||
+          t.specialization?.toLowerCase().includes(term) ||
+          t.bio?.toLowerCase().includes(term)
+      );
+    }
+
+    const trainers = docs.map((t) => ({
+      id: t.id || t._id,
+      _id: t._id,
+      specialization: t.specialization,
+      experience_years: t.experience_years,
+      bio: t.bio,
+      certifications: t.certifications,
+      availability_status: t.availability_status,
+      full_name: t.user?.full_name || 'Coach',
+      email: t.user?.email || null,
+    }));
+
     return sendSuccess(res, { trainers });
   } catch (error) {
     console.error('getPublicTrainers error:', error);
@@ -33,34 +49,60 @@ export async function getPublicTrainers(req, res) {
 
 export async function getTrainerDashboard(req, res) {
   try {
-    const trainerRows = await query('SELECT * FROM trainers WHERE user_id = ? LIMIT 1', [req.user.id]);
-    if (!trainerRows || trainerRows.length === 0) {
+    const trainer = await Trainer.findOne({
+      $or: [{ user_id: req.user.id }, { user: req.user._id }],
+    })
+      .populate('user')
+      .lean();
+
+    if (!trainer) {
       return sendError(res, 'Trainer profile not found', 'NOT_FOUND', 404);
     }
-    const trainer = trainerRows[0];
 
-    // Assigned members with current plan
-    const assignedMembers = await query(
-      `SELECT m.id, m.user_id, m.join_date, m.status,
-              u.full_name, u.email, u.phone,
-              wp.name AS plan_name
-       FROM members m
-       JOIN users u ON m.user_id = u.id
-       LEFT JOIN workout_plans wp ON wp.created_by = ?
-       WHERE m.trainer_id = ?
-       GROUP BY m.id
-       ORDER BY m.id DESC`,
-      [trainer.id, trainer.id]
-    );
+    const trainerIdNum = trainer.id;
+    const memberDocs = await Member.find({
+      $or: [{ trainer_id: trainerIdNum }, { trainer: trainer._id }],
+    })
+      .populate('user')
+      .populate('membership')
+      .sort({ id: -1 })
+      .lean();
 
-    // Plans authored by this coach
-    const myPlans = await query(
-      'SELECT id, name, goal, difficulty, duration_weeks, description FROM workout_plans WHERE created_by = ?',
-      [trainer.id]
-    );
+    const planDocs = await WorkoutPlan.find({
+      $or: [{ created_by: trainerIdNum }, { trainer: trainer._id }],
+    })
+      .sort({ id: -1 })
+      .lean();
+
+    const defaultPlanName = planDocs.length > 0 ? planDocs[0].name : 'Push-Pull-Legs (PPL) Split';
+
+    const assignedMembers = memberDocs.map((m) => ({
+      id: m.id || m._id,
+      _id: m._id,
+      user_id: m.user_id || m.user?.id,
+      join_date: m.join_date,
+      status: m.status,
+      full_name: m.user?.full_name || 'Athlete',
+      email: m.user?.email || null,
+      phone: m.user?.phone || null,
+      plan_name: defaultPlanName,
+    }));
+
+    const myPlans = planDocs.map((p) => ({
+      id: p.id || p._id,
+      _id: p._id,
+      name: p.name,
+      goal: p.goal,
+      difficulty: p.difficulty,
+      duration_weeks: p.duration_weeks,
+      description: p.description,
+    }));
 
     return sendSuccess(res, {
-      trainer,
+      trainer: {
+        ...trainer,
+        id: trainer.id || trainer._id,
+      },
       membersCount: assignedMembers.length,
       assignedMembers,
       myPlans,
@@ -73,11 +115,22 @@ export async function getTrainerDashboard(req, res) {
 
 export async function getTrainerProfile(req, res) {
   try {
-    const rows = await query('SELECT * FROM trainers WHERE user_id = ? LIMIT 1', [req.user.id]);
-    if (!rows || rows.length === 0) {
+    const doc = await Trainer.findOne({
+      $or: [{ user_id: req.user.id }, { user: req.user._id }],
+    })
+      .populate('user')
+      .lean();
+
+    if (!doc) {
       return sendError(res, 'Trainer profile not found', 'NOT_FOUND', 404);
     }
-    return sendSuccess(res, { trainer: rows[0] });
+
+    const trainer = {
+      ...doc,
+      id: doc.id || doc._id,
+    };
+
+    return sendSuccess(res, { trainer });
   } catch (error) {
     console.error('getTrainerProfile error:', error);
     return sendError(res, 'Failed to load profile', 'INTERNAL_ERROR', 500);
@@ -88,23 +141,21 @@ export async function updateTrainerProfile(req, res) {
   try {
     const { specialization, experience_years, bio, certifications, availability_status } = req.body;
 
-    await query(
-      `UPDATE trainers SET
-        specialization = ?,
-        experience_years = ?,
-        bio = ?,
-        certifications = ?,
-        availability_status = ?
-       WHERE user_id = ?`,
-      [
-        specialization?.trim() || '',
-        parseInt(experience_years, 10) || 1,
-        bio?.trim() || '',
-        certifications?.trim() || '',
-        availability_status || 'Available',
-        req.user.id,
-      ]
+    const updated = await Trainer.findOneAndUpdate(
+      { $or: [{ user_id: req.user.id }, { user: req.user._id }] },
+      {
+        specialization: specialization?.trim() || '',
+        experience_years: parseInt(experience_years, 10) || 1,
+        bio: bio?.trim() || '',
+        certifications: certifications?.trim() || '',
+        availability_status: availability_status || 'Available',
+      },
+      { returnDocument: 'after' }
     );
+
+    if (!updated) {
+      return sendError(res, 'Trainer profile not found', 'NOT_FOUND', 404);
+    }
 
     return sendSuccess(res, null, 'Trainer profile updated successfully');
   } catch (error) {
@@ -115,23 +166,33 @@ export async function updateTrainerProfile(req, res) {
 
 export async function getAssignedMembers(req, res) {
   try {
-    const trainerRows = await query('SELECT id FROM trainers WHERE user_id = ? LIMIT 1', [req.user.id]);
-    if (!trainerRows || trainerRows.length === 0) {
+    const trainer = await Trainer.findOne({
+      $or: [{ user_id: req.user.id }, { user: req.user._id }],
+    });
+
+    if (!trainer) {
       return sendError(res, 'Trainer profile not found', 'NOT_FOUND', 404);
     }
-    const trainerId = trainerRows[0].id;
 
-    const members = await query(
-      `SELECT m.id, m.user_id, m.join_date, m.status,
-              u.full_name, u.email, u.phone,
-              mem.name AS membership_name
-       FROM members m
-       JOIN users u ON m.user_id = u.id
-       LEFT JOIN memberships mem ON m.membership_id = mem.id
-       WHERE m.trainer_id = ?
-       ORDER BY m.id DESC`,
-      [trainerId]
-    );
+    const docs = await Member.find({
+      $or: [{ trainer_id: trainer.id }, { trainer: trainer._id }],
+    })
+      .populate('user')
+      .populate('membership')
+      .sort({ id: -1 })
+      .lean();
+
+    const members = docs.map((m) => ({
+      id: m.id || m._id,
+      _id: m._id,
+      user_id: m.user_id || m.user?.id,
+      join_date: m.join_date,
+      status: m.status,
+      full_name: m.user?.full_name || 'Member',
+      email: m.user?.email || null,
+      phone: m.user?.phone || null,
+      membership_name: m.membership?.name || null,
+    }));
 
     return sendSuccess(res, { members });
   } catch (error) {
@@ -144,37 +205,58 @@ export async function getMemberDetailsForTrainer(req, res) {
   try {
     const { id } = req.params;
 
-    const memberRows = await query(
-      `SELECT m.id, m.user_id, m.join_date, m.status, m.membership_id,
-              u.full_name, u.email, u.phone,
-              mem.name AS membership_name
-       FROM members m
-       JOIN users u ON m.user_id = u.id
-       LEFT JOIN memberships mem ON m.membership_id = mem.id
-       WHERE m.id = ? LIMIT 1`,
-      [id]
-    );
+    const mDoc = await Member.findOne(buildIdQuery(id))
+      .populate('user')
+      .populate('membership')
+      .lean();
 
-    if (!memberRows || memberRows.length === 0) {
+    if (!mDoc) {
       return sendError(res, 'Member record not located', 'NOT_FOUND', 404);
     }
-    const member = memberRows[0];
+
+    const member = {
+      id: mDoc.id || mDoc._id,
+      _id: mDoc._id,
+      user_id: mDoc.user_id || mDoc.user?.id,
+      join_date: mDoc.join_date,
+      status: mDoc.status,
+      membership_id: mDoc.membership_id || mDoc.membership?.id,
+      full_name: mDoc.user?.full_name || 'Athlete',
+      email: mDoc.user?.email || null,
+      phone: mDoc.user?.phone || null,
+      membership_name: mDoc.membership?.name || null,
+    };
+
+    const memberIdNum = member.id;
 
     // Attendance
-    const attendance = await query(
-      'SELECT id, date, check_in_time, check_out_time, status FROM attendance WHERE member_id = ? ORDER BY date DESC LIMIT 10',
-      [id]
-    );
+    const attDocs = await Attendance.find({
+      $or: [{ member_id: memberIdNum }, { member: mDoc._id }],
+    })
+      .sort({ date: -1 })
+      .limit(10)
+      .lean();
+
+    const attendance = attDocs.map((a) => ({
+      ...a,
+      id: a.id || a._id,
+    }));
 
     // Progress
-    const progress = await query(
-      'SELECT id, measured_on, weight_kg, height_cm, bmi, notes FROM progress WHERE member_id = ? ORDER BY measured_on DESC',
-      [id]
-    );
+    const progDocs = await Progress.find({
+      $or: [{ member_id: memberIdNum }, { member: mDoc._id }],
+    })
+      .sort({ measured_on: -1 })
+      .lean();
 
-    // Assigned workout plan (default to a plan if any)
-    const planRows = await query('SELECT * FROM workout_plans ORDER BY id ASC LIMIT 1');
-    const workoutPlan = planRows.length > 0 ? planRows[0] : null;
+    const progress = progDocs.map((p) => ({
+      ...p,
+      id: p.id || p._id,
+    }));
+
+    // Workout plan (default to first available plan)
+    const planDoc = await WorkoutPlan.findOne().sort({ id: 1 }).lean();
+    const workoutPlan = planDoc ? { ...planDoc, id: planDoc.id || planDoc._id } : null;
 
     return sendSuccess(res, { member, attendance, progress, workoutPlan });
   } catch (error) {
@@ -192,9 +274,8 @@ export async function assignPlanToMember(req, res) {
       return sendError(res, 'Workout plan selection is required', 'VALIDATION_ERROR', 400);
     }
 
-    // Check member exists
-    const mRows = await query('SELECT id FROM members WHERE id = ? LIMIT 1', [id]);
-    if (!mRows || mRows.length === 0) {
+    const member = await Member.findOne(buildIdQuery(id));
+    if (!member) {
       return sendError(res, 'Member not found', 'NOT_FOUND', 404);
     }
 
@@ -214,18 +295,30 @@ export async function addMemberProgressByTrainer(req, res) {
       return sendError(res, 'Date and weight are required', 'VALIDATION_ERROR', 400);
     }
 
-    await query(
-      `INSERT INTO progress (member_id, measured_on, weight_kg, height_cm, bmi, notes)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        parseInt(id, 10),
-        measured_on,
-        parseFloat(weight_kg),
-        height_cm ? parseFloat(height_cm) : null,
-        bmi ? parseFloat(bmi) : null,
-        notes?.trim() || null,
-      ]
-    );
+    const member = await Member.findOne(buildIdQuery(id));
+    if (!member) {
+      return sendError(res, 'Member not found', 'NOT_FOUND', 404);
+    }
+
+    const nextId = await getNextSequence('progress');
+    const w = parseFloat(weight_kg);
+    const h = height_cm ? parseFloat(height_cm) : null;
+    let computedBmi = bmi ? parseFloat(bmi) : null;
+
+    if (!computedBmi && w > 0 && h > 0) {
+      computedBmi = parseFloat((w / ((h / 100) * (h / 100))).toFixed(1));
+    }
+
+    await Progress.create({
+      id: nextId,
+      member_id: member.id || parseInt(id, 10),
+      member: member._id,
+      measured_on,
+      weight_kg: w,
+      height_cm: h,
+      bmi: computedBmi,
+      notes: notes?.trim() || null,
+    });
 
     return sendSuccess(res, null, 'Biometric progress recorded successfully', 201);
   } catch (error) {
@@ -236,13 +329,26 @@ export async function addMemberProgressByTrainer(req, res) {
 
 export async function getTrainerPlans(req, res) {
   try {
-    const tRows = await query('SELECT id FROM trainers WHERE user_id = ? LIMIT 1', [req.user.id]);
-    if (!tRows || tRows.length === 0) {
+    const trainer = await Trainer.findOne({
+      $or: [{ user_id: req.user.id }, { user: req.user._id }],
+    });
+
+    if (!trainer) {
       return sendError(res, 'Trainer profile not found', 'NOT_FOUND', 404);
     }
-    const trainerId = tRows[0].id;
 
-    const plans = await query('SELECT * FROM workout_plans WHERE created_by = ? ORDER BY id DESC', [trainerId]);
+    const docs = await WorkoutPlan.find({
+      $or: [{ created_by: trainer.id }, { trainer: trainer._id }],
+    })
+      .sort({ id: -1 })
+      .lean();
+
+    const plans = docs.map((p) => ({
+      ...p,
+      id: p.id || p._id,
+      exercise_count: p.exercises ? p.exercises.length : 0,
+    }));
+
     return sendSuccess(res, { plans });
   } catch (error) {
     console.error('getTrainerPlans error:', error);

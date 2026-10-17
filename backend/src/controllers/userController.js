@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
-import { query } from '../config/db.js';
+import User from '../models/User.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function updateProfile(req, res) {
@@ -8,6 +9,11 @@ export async function updateProfile(req, res) {
 
     if (!full_name || !full_name.trim()) {
       return sendError(res, 'Full name cannot be empty', 'VALIDATION_ERROR', 400);
+    }
+
+    const user = await User.findOne(buildIdQuery(req.user.id || req.user._id));
+    if (!user) {
+      return sendError(res, 'User record not found', 'NOT_FOUND', 404);
     }
 
     // Check if password change is requested
@@ -19,30 +25,19 @@ export async function updateProfile(req, res) {
         return sendError(res, 'New password must be at least 6 characters long', 'VALIDATION_ERROR', 400);
       }
 
-      // Verify current password
-      const userRows = await query('SELECT password_hash FROM users WHERE id = ? LIMIT 1', [req.user.id]);
-      if (!userRows || userRows.length === 0) {
-        return sendError(res, 'User record not found', 'NOT_FOUND', 404);
-      }
-
-      const isMatch = await bcrypt.compare(current_password, userRows[0].password_hash);
+      const isMatch = await bcrypt.compare(current_password, user.password_hash);
       if (!isMatch) {
         return sendError(res, 'Current password entered is incorrect', 'INVALID_CREDENTIALS', 400);
       }
 
       const salt = await bcrypt.genSalt(10);
-      const newHash = await bcrypt.hash(new_password, salt);
-
-      await query(
-        'UPDATE users SET full_name = ?, phone = ?, password_hash = ?, updated_at = NOW() WHERE id = ?',
-        [full_name.trim(), phone?.trim() || null, newHash, req.user.id]
-      );
-    } else {
-      await query(
-        'UPDATE users SET full_name = ?, phone = ?, updated_at = NOW() WHERE id = ?',
-        [full_name.trim(), phone?.trim() || null, req.user.id]
-      );
+      user.password_hash = await bcrypt.hash(new_password, salt);
     }
+
+    user.full_name = full_name.trim();
+    user.phone = phone?.trim() || null;
+    user.updated_at = new Date();
+    await user.save();
 
     return sendSuccess(res, null, 'Profile updated successfully');
   } catch (error) {

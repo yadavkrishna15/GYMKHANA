@@ -1,14 +1,21 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { query } from '../config/db.js';
+import User from '../models/User.js';
+import Member from '../models/Member.js';
+import Trainer from '../models/Trainer.js';
+import Membership from '../models/Membership.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'gymkhana_default_dev_secret_key';
+function getJwtSecret() {
+  return process.env.JWT_SECRET || 'gymkhana_default_dev_secret_key';
+}
 
 function generateToken(user) {
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
-    JWT_SECRET,
+    { id: user.id || user._id, email: user.email, role: user.role },
+    getJwtSecret(),
     { expiresIn: '7d' }
   );
 }
@@ -33,42 +40,53 @@ export async function register(req, res) {
     }
 
     // 2. Duplicate email check
-    const existing = await query('SELECT id FROM users WHERE email = ? LIMIT 1', [email.trim().toLowerCase()]);
-    if (existing && existing.length > 0) {
+    const existing = await User.findOne({ email: email.trim().toLowerCase() });
+    if (existing) {
       return sendError(res, 'An account with this email address already exists', 'DUPLICATE_EMAIL', 409);
     }
 
     // 3. Hash password
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
-    const now = new Date();
 
-    // 4. Insert into users
-    const userResult = await query(
-      'INSERT INTO users (full_name, email, phone, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [full_name.trim(), email.trim().toLowerCase(), phone?.trim() || null, password_hash, 'MEMBER', now, now]
-    );
+    // 4. Sequential ID for backwards compatibility
+    const nextUserId = await getNextSequence('users');
 
-    const userId = userResult.insertId;
-
-    // 5. Initialize member record
-    const today = now.toISOString().split('T')[0];
-    await query(
-      'INSERT INTO members (user_id, membership_id, trainer_id, join_date, status) VALUES (?, NULL, NULL, ?, ?)',
-      [userId, today, 'ACTIVE']
-    );
-
-    const user = {
-      id: userId,
+    // 5. Create user
+    const newUser = await User.create({
+      id: nextUserId,
       full_name: full_name.trim(),
       email: email.trim().toLowerCase(),
       phone: phone?.trim() || null,
+      password_hash,
+      role: 'MEMBER',
+    });
+
+    // 6. Initialize member record
+    const nextMemberId = await getNextSequence('members');
+    const today = new Date().toISOString().split('T')[0];
+    await Member.create({
+      id: nextMemberId,
+      user_id: newUser.id,
+      user: newUser._id,
+      membership_id: null,
+      trainer_id: null,
+      join_date: today,
+      status: 'ACTIVE',
+    });
+
+    const userObj = {
+      id: newUser.id,
+      _id: newUser._id,
+      full_name: newUser.full_name,
+      email: newUser.email,
+      phone: newUser.phone,
       role: 'MEMBER',
     };
 
-    const token = generateToken(user);
+    const token = generateToken(userObj);
 
-    return sendSuccess(res, { user, token }, 'Registration successful! Welcome to GYMKHANA.', 201);
+    return sendSuccess(res, { user: userObj, token }, 'Registration successful! Welcome to GYMKHANA.', 201);
   } catch (error) {
     console.error('Registration Error:', error);
     return sendError(res, 'Server error during registration. Please try again.', 'INTERNAL_ERROR', 500);
@@ -83,19 +101,19 @@ export async function login(req, res) {
       return sendError(res, 'Email and password are required', 'VALIDATION_ERROR', 400);
     }
 
-    const rows = await query('SELECT * FROM users WHERE email = ? LIMIT 1', [email.trim().toLowerCase()]);
-    if (!rows || rows.length === 0) {
+    const userRecord = await User.findOne({ email: email.trim().toLowerCase() });
+    if (!userRecord) {
       return sendError(res, 'Invalid email or password credentials', 'INVALID_CREDENTIALS', 401);
     }
 
-    const userRecord = rows[0];
     const isMatch = await bcrypt.compare(password, userRecord.password_hash);
     if (!isMatch) {
       return sendError(res, 'Invalid email or password credentials', 'INVALID_CREDENTIALS', 401);
     }
 
     const user = {
-      id: userRecord.id,
+      id: userRecord.id || userRecord._id,
+      _id: userRecord._id,
       full_name: userRecord.full_name,
       email: userRecord.email,
       phone: userRecord.phone,
@@ -116,28 +134,56 @@ export async function getMe(req, res) {
     const user = { ...req.user };
 
     if (user.role === 'MEMBER') {
-      const memberRows = await query(
-        `SELECT m.id AS member_id, m.membership_id, m.trainer_id, m.join_date, m.status,
-                mem.name AS membership_name,
-                u.full_name AS trainer_name
-         FROM members m
-         LEFT JOIN memberships mem ON m.membership_id = mem.id
-         LEFT JOIN trainers t ON m.trainer_id = t.id
-         LEFT JOIN users u ON t.user_id = u.id
-         WHERE m.user_id = ? LIMIT 1`,
-        [user.id]
-      );
-      if (memberRows && memberRows.length > 0) {
-        user.memberDetails = memberRows[0];
+      const member = await Member.findOne({
+        $or: [{ user_id: user.id }, { user: user._id }],
+      })
+        .populate('membership')
+        .populate({
+          path: 'trainer',
+          populate: { path: 'user', select: 'full_name email' },
+        })
+        .lean();
+
+      if (member) {
+        // Also check if membership or trainer was linked by numeric ID
+        let membershipName = member.membership?.name;
+        if (!membershipName && member.membership_id) {
+          const m = await Membership.findOne(buildIdQuery(member.membership_id)).lean();
+          if (m) membershipName = m.name;
+        }
+
+        let trainerName = member.trainer?.user?.full_name;
+        if (!trainerName && member.trainer_id) {
+          const t = await Trainer.findOne(buildIdQuery(member.trainer_id)).populate('user').lean();
+          if (t && t.user) trainerName = t.user.full_name;
+        }
+
+        user.memberDetails = {
+          member_id: member.id || member._id,
+          id: member.id || member._id,
+          membership_id: member.membership_id || member.membership?.id,
+          trainer_id: member.trainer_id || member.trainer?.id,
+          join_date: member.join_date,
+          status: member.status,
+          membership_name: membershipName || null,
+          trainer_name: trainerName || null,
+        };
       }
     } else if (user.role === 'TRAINER') {
-      const trainerRows = await query(
-        `SELECT id AS trainer_id, specialization, experience_years, bio, certifications, availability_status
-         FROM trainers WHERE user_id = ? LIMIT 1`,
-        [user.id]
-      );
-      if (trainerRows && trainerRows.length > 0) {
-        user.trainerDetails = trainerRows[0];
+      const trainer = await Trainer.findOne({
+        $or: [{ user_id: user.id }, { user: user._id }],
+      }).lean();
+
+      if (trainer) {
+        user.trainerDetails = {
+          trainer_id: trainer.id || trainer._id,
+          id: trainer.id || trainer._id,
+          specialization: trainer.specialization,
+          experience_years: trainer.experience_years,
+          bio: trainer.bio,
+          certifications: trainer.certifications,
+          availability_status: trainer.availability_status,
+        };
       }
     }
 

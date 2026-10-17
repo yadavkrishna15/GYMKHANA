@@ -1,9 +1,16 @@
-import { query } from '../config/db.js';
+import Membership from '../models/Membership.js';
+import Member from '../models/Member.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function getMemberships(req, res) {
   try {
-    const memberships = await query('SELECT * FROM memberships ORDER BY price ASC');
+    const docs = await Membership.find().sort({ price: 1 }).lean();
+    const memberships = docs.map((m) => ({
+      ...m,
+      id: m.id || m._id,
+    }));
     return sendSuccess(res, { memberships });
   } catch (error) {
     console.error('getMemberships error:', error);
@@ -18,18 +25,21 @@ export async function requestMembership(req, res) {
       return sendError(res, 'Membership ID is required', 'VALIDATION_ERROR', 400);
     }
 
-    const memRows = await query('SELECT * FROM memberships WHERE id = ? LIMIT 1', [membership_id]);
-    if (!memRows || memRows.length === 0) {
+    const memDoc = await Membership.findOne(buildIdQuery(membership_id));
+    if (!memDoc) {
       return sendError(res, 'Membership tier not found', 'NOT_FOUND', 404);
     }
 
-    // Update user's member row
-    await query(
-      'UPDATE members SET membership_id = ?, status = ? WHERE user_id = ?',
-      [membership_id, 'ACTIVE', req.user.id]
+    await Member.findOneAndUpdate(
+      { $or: [{ user_id: req.user.id }, { user: req.user._id }] },
+      {
+        membership_id: memDoc.id || parseInt(membership_id, 10),
+        membership: memDoc._id,
+        status: 'ACTIVE',
+      }
     );
 
-    return sendSuccess(res, null, `Membership request for ${memRows[0].name} registered successfully`);
+    return sendSuccess(res, null, `Membership request for ${memDoc.name} registered successfully`);
   } catch (error) {
     console.error('requestMembership error:', error);
     return sendError(res, 'Failed to request membership', 'INTERNAL_ERROR', 500);
@@ -44,21 +54,18 @@ export async function createMembership(req, res) {
       return sendError(res, 'Name and price are required', 'VALIDATION_ERROR', 400);
     }
 
-    const now = new Date();
-    const result = await query(
-      `INSERT INTO memberships (name, duration_months, price, features, access_details, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        name.trim(),
-        parseInt(duration_months, 10) || 1,
-        parseFloat(price),
-        features?.trim() || null,
-        access_details?.trim() || null,
-        now,
-      ]
-    );
+    const nextId = await getNextSequence('memberships');
 
-    return sendSuccess(res, { id: result.insertId }, 'Membership tier created successfully', 201);
+    const created = await Membership.create({
+      id: nextId,
+      name: name.trim(),
+      duration_months: parseInt(duration_months, 10) || 1,
+      price: parseFloat(price),
+      features: features?.trim() || null,
+      access_details: access_details?.trim() || null,
+    });
+
+    return sendSuccess(res, { id: created.id || created._id }, 'Membership tier created successfully', 201);
   } catch (error) {
     console.error('createMembership error:', error);
     return sendError(res, 'Failed to create membership tier', 'INTERNAL_ERROR', 500);
@@ -70,23 +77,21 @@ export async function updateMembership(req, res) {
     const { id } = req.params;
     const { name, duration_months, price, features, access_details } = req.body;
 
-    await query(
-      `UPDATE memberships SET
-        name = ?,
-        duration_months = ?,
-        price = ?,
-        features = ?,
-        access_details = ?
-       WHERE id = ?`,
-      [
-        name?.trim() || '',
-        parseInt(duration_months, 10) || 1,
-        parseFloat(price) || 0,
-        features?.trim() || null,
-        access_details?.trim() || null,
-        id,
-      ]
+    const updated = await Membership.findOneAndUpdate(
+      buildIdQuery(id),
+      {
+        name: name?.trim() || '',
+        duration_months: parseInt(duration_months, 10) || 1,
+        price: parseFloat(price) || 0,
+        features: features?.trim() || null,
+        access_details: access_details?.trim() || null,
+      },
+      { returnDocument: 'after' }
     );
+
+    if (!updated) {
+      return sendError(res, 'Membership tier not found', 'NOT_FOUND', 404);
+    }
 
     return sendSuccess(res, null, 'Membership tier updated successfully');
   } catch (error) {
@@ -98,7 +103,7 @@ export async function updateMembership(req, res) {
 export async function deleteMembership(req, res) {
   try {
     const { id } = req.params;
-    await query('DELETE FROM memberships WHERE id = ?', [id]);
+    await Membership.findOneAndDelete(buildIdQuery(id));
     return sendSuccess(res, null, 'Membership tier deleted successfully');
   } catch (error) {
     console.error('deleteMembership error:', error);

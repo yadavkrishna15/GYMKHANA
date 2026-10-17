@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
@@ -16,20 +16,19 @@ import adminRoutes from './routes/adminRoutes.js';
 
 import { sendError } from './utils/response.js';
 
-dotenv.config();
-
 const app = express();
 
-// CORS configuration (no wildcard in prod, driven by env)
+// CORS configuration (handles multiple origins and trailing slashes)
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .split(',')
-  .map((origin) => origin.trim());
+  .map((origin) => origin.trim().replace(/\/+$/, ''));
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      const normalizedOrigin = origin ? origin.replace(/\/+$/, '') : origin;
+      if (!origin || allowedOrigins.includes(normalizedOrigin) || allowedOrigins.includes('*')) {
         callback(null, true);
       } else {
         callback(new Error('Blocked by CORS security policy'));

@@ -1,30 +1,41 @@
-import { query } from '../config/db.js';
+import Attendance from '../models/Attendance.js';
+import Member from '../models/Member.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function getAttendanceLogs(req, res) {
   try {
     const { date, member_id } = req.query;
-    let sql = `
-      SELECT a.*, u.full_name AS member_name, u.email
-      FROM attendance a
-      JOIN members m ON a.member_id = m.id
-      JOIN users u ON m.user_id = u.id
-      WHERE 1=1
-    `;
-    const params = [];
+    const filter = {};
 
     if (date) {
-      sql += ' AND a.date = ?';
-      params.push(date);
+      filter.date = date;
     }
     if (member_id) {
-      sql += ' AND a.member_id = ?';
-      params.push(member_id);
+      const mNum = parseInt(member_id, 10);
+      if (!isNaN(mNum)) {
+        filter.$or = [{ member_id: mNum }, { member: member_id }];
+      } else {
+        filter.member = member_id;
+      }
     }
 
-    sql += ' ORDER BY a.date DESC, a.id DESC';
+    const docs = await Attendance.find(filter)
+      .populate({
+        path: 'member',
+        populate: { path: 'user', select: 'full_name email' },
+      })
+      .sort({ date: -1, id: -1 })
+      .lean();
 
-    const attendance = await query(sql, params);
+    const attendance = docs.map((a) => ({
+      ...a,
+      id: a.id || a._id,
+      member_name: a.member?.user?.full_name || 'Member',
+      email: a.member?.user?.email || null,
+    }));
+
     return sendSuccess(res, { attendance });
   } catch (error) {
     console.error('getAttendanceLogs error:', error);
@@ -40,19 +51,24 @@ export async function recordAttendance(req, res) {
       return sendError(res, 'Member selection and date are required', 'VALIDATION_ERROR', 400);
     }
 
-    const result = await query(
-      `INSERT INTO attendance (member_id, date, check_in_time, check_out_time, status)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        parseInt(member_id, 10),
-        date,
-        check_in_time?.trim() || '07:00 AM',
-        check_out_time?.trim() || '08:30 AM',
-        status || 'Present',
-      ]
-    );
+    const member = await Member.findOne(buildIdQuery(member_id));
+    if (!member) {
+      return sendError(res, 'Member record not found', 'NOT_FOUND', 404);
+    }
 
-    return sendSuccess(res, { id: result.insertId }, 'Attendance logged successfully', 201);
+    const nextId = await getNextSequence('attendance');
+
+    const created = await Attendance.create({
+      id: nextId,
+      member_id: member.id || parseInt(member_id, 10),
+      member: member._id,
+      date,
+      check_in_time: check_in_time?.trim() || '07:00 AM',
+      check_out_time: check_out_time?.trim() || '08:30 AM',
+      status: status || 'Present',
+    });
+
+    return sendSuccess(res, { id: created.id || created._id }, 'Attendance logged successfully', 201);
   } catch (error) {
     console.error('recordAttendance error:', error);
     return sendError(res, 'Failed to log attendance', 'INTERNAL_ERROR', 500);

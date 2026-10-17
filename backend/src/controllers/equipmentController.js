@@ -1,27 +1,34 @@
-import { query } from '../config/db.js';
+import Equipment from '../models/Equipment.js';
+import { getNextSequence } from '../models/Counter.js';
+import { buildIdQuery } from '../utils/idHelper.js';
 import { sendSuccess, sendError } from '../utils/response.js';
 
 export async function getEquipment(req, res) {
   try {
     const { category, target_body_part, search } = req.query;
-    let sql = 'SELECT * FROM equipment WHERE 1=1';
-    const params = [];
+    const filter = {};
 
     if (category) {
-      sql += ' AND category = ?';
-      params.push(category);
+      filter.category = category;
     }
     if (target_body_part) {
-      sql += ' AND target_body_part = ?';
-      params.push(target_body_part);
+      filter.target_body_part = target_body_part;
     }
     if (search) {
-      sql += ' AND (name LIKE ? OR description LIKE ? OR primary_purpose LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      const searchRegex = new RegExp(search.trim(), 'i');
+      filter.$or = [
+        { name: searchRegex },
+        { description: searchRegex },
+        { primary_purpose: searchRegex },
+      ];
     }
 
-    sql += ' ORDER BY name ASC';
-    const equipment = await query(sql, params);
+    const docs = await Equipment.find(filter).sort({ name: 1 }).lean();
+    const equipment = docs.map((d) => ({
+      ...d,
+      id: d.id || d._id,
+    }));
+
     return sendSuccess(res, { equipment });
   } catch (error) {
     console.error('getEquipment error:', error);
@@ -32,18 +39,28 @@ export async function getEquipment(req, res) {
 export async function getEquipmentById(req, res) {
   try {
     const { id } = req.params;
-    const rows = await query('SELECT * FROM equipment WHERE id = ? LIMIT 1', [id]);
+    const doc = await Equipment.findOne(buildIdQuery(id)).lean();
 
-    if (!rows || rows.length === 0) {
+    if (!doc) {
       return sendError(res, 'Equipment item not found', 'NOT_FOUND', 404);
     }
 
-    const equipment = rows[0];
+    const equipment = {
+      ...doc,
+      id: doc.id || doc._id,
+    };
 
-    const related = await query(
-      'SELECT id, name, category, target_body_part, description FROM equipment WHERE (category = ? OR target_body_part = ?) AND id != ? LIMIT 4',
-      [equipment.category, equipment.target_body_part, id]
-    );
+    const relatedDocs = await Equipment.find({
+      $or: [{ category: equipment.category }, { target_body_part: equipment.target_body_part }],
+      _id: { $ne: doc._id },
+    })
+      .limit(4)
+      .lean();
+
+    const related = relatedDocs.map((r) => ({
+      ...r,
+      id: r.id || r._id,
+    }));
 
     return sendSuccess(res, { equipment, related });
   } catch (error) {
@@ -70,26 +87,22 @@ export async function createEquipment(req, res) {
       return sendError(res, 'Name, category, target area, description, and usage steps are required', 'VALIDATION_ERROR', 400);
     }
 
-    const now = new Date();
-    const result = await query(
-      `INSERT INTO equipment
-        (name, category, target_body_part, description, primary_purpose, benefits, how_to_use, safety_instructions, image_url, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        name.trim(),
-        category.trim(),
-        target_body_part.trim(),
-        description.trim(),
-        primary_purpose?.trim() || 'Strength & Conditioning',
-        benefits?.trim() || null,
-        how_to_use.trim(),
-        safety_instructions?.trim() || 'Check pin security before movement.',
-        image_url?.trim() || null,
-        now,
-      ]
-    );
+    const nextId = await getNextSequence('equipment');
 
-    return sendSuccess(res, { id: result.insertId }, 'Equipment registered successfully', 201);
+    const created = await Equipment.create({
+      id: nextId,
+      name: name.trim(),
+      category: category.trim(),
+      target_body_part: target_body_part.trim(),
+      description: description.trim(),
+      primary_purpose: primary_purpose?.trim() || 'Strength & Conditioning',
+      benefits: benefits?.trim() || null,
+      how_to_use: how_to_use.trim(),
+      safety_instructions: safety_instructions?.trim() || 'Check pin security before movement.',
+      image_url: image_url?.trim() || null,
+    });
+
+    return sendSuccess(res, { id: created.id || created._id }, 'Equipment registered successfully', 201);
   } catch (error) {
     console.error('createEquipment error:', error);
     return sendError(res, 'Failed to register equipment', 'INTERNAL_ERROR', 500);
@@ -111,31 +124,25 @@ export async function updateEquipment(req, res) {
       image_url,
     } = req.body;
 
-    await query(
-      `UPDATE equipment SET
-        name = ?,
-        category = ?,
-        target_body_part = ?,
-        description = ?,
-        primary_purpose = ?,
-        benefits = ?,
-        how_to_use = ?,
-        safety_instructions = ?,
-        image_url = ?
-       WHERE id = ?`,
-      [
-        name?.trim() || '',
-        category?.trim() || '',
-        target_body_part?.trim() || '',
-        description?.trim() || '',
-        primary_purpose?.trim() || '',
-        benefits?.trim() || null,
-        how_to_use?.trim() || '',
-        safety_instructions?.trim() || '',
-        image_url?.trim() || null,
-        id,
-      ]
+    const updated = await Equipment.findOneAndUpdate(
+      buildIdQuery(id),
+      {
+        name: name?.trim() || '',
+        category: category?.trim() || '',
+        target_body_part: target_body_part?.trim() || '',
+        description: description?.trim() || '',
+        primary_purpose: primary_purpose?.trim() || '',
+        benefits: benefits?.trim() || null,
+        how_to_use: how_to_use?.trim() || '',
+        safety_instructions: safety_instructions?.trim() || '',
+        image_url: image_url?.trim() || null,
+      },
+      { returnDocument: 'after' }
     );
+
+    if (!updated) {
+      return sendError(res, 'Equipment item not found', 'NOT_FOUND', 404);
+    }
 
     return sendSuccess(res, null, 'Equipment record updated successfully');
   } catch (error) {
@@ -147,7 +154,7 @@ export async function updateEquipment(req, res) {
 export async function deleteEquipment(req, res) {
   try {
     const { id } = req.params;
-    await query('DELETE FROM equipment WHERE id = ?', [id]);
+    await Equipment.findOneAndDelete(buildIdQuery(id));
     return sendSuccess(res, null, 'Equipment deleted successfully');
   } catch (error) {
     console.error('deleteEquipment error:', error);

@@ -1,11 +1,18 @@
+import 'dotenv/config';
 import app from './app.js';
+import { connectDB } from './config/db.js';
 
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
-app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(` GYMKHANA API Server running on port ${PORT}`);
-  console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(` Health check: http://localhost:${PORT}/api/health`);
-  console.log(`=======================================================`);
-});
+async function startServer() {
+  await connectDB();
+  app.listen(PORT, () => {
+    console.log(`=======================================================`);
+    console.log(` GYMKHANA API Server running on port ${PORT}`);
+    console.log(` Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(` Health check: http://localhost:${PORT}/api/health`);
+    console.log(`=======================================================`);
+  });
+}
+
+startServer();
