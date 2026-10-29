@@ -39,7 +39,7 @@ The seed script loads realistic demo accounts with pre-hashed passwords. Quick-f
 
 | Role | Email Address | Password | Intended Workflow / Workspace |
 | :--- | :--- | :--- | :--- |
-| **ADMIN** | `admin@gymkhana.com` | `Admin@123` | Full facility overview, member & trainer control, equipment/exercise CRUD, inquiry desk |
+
 | **TRAINER** | `trainer@gymkhana.com` | `Trainer@123` | Coaching workspace, assigned athlete roster, biometric logging, authoring workout plans |
 | **MEMBER** | `member1@gymkhana.com` | `Member@123` | Athlete portal: active membership tier, assigned routine, attendance history, BMI logs |
 | **MEMBER** | `member2@gymkhana.com` | `Member@123` | Active member coached by Coach Ananya Roy |
