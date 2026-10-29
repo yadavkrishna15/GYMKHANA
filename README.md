@@ -33,21 +33,7 @@
 
 ---
 
-## 3. Demo Credentials (For Evaluators & Viva Panel)
-
-The seed script loads realistic demo accounts with pre-hashed passwords. Quick-fill buttons are also provided on the login page (`/login`):
-
-| Role | Email Address | Password | Intended Workflow / Workspace |
-| :--- | :--- | :--- | :--- |
-
-| **TRAINER** | `trainer@gymkhana.com` | `Trainer@123` | Coaching workspace, assigned athlete roster, biometric logging, authoring workout plans |
-| **MEMBER** | `member1@gymkhana.com` | `Member@123` | Athlete portal: active membership tier, assigned routine, attendance history, BMI logs |
-| **MEMBER** | `member2@gymkhana.com` | `Member@123` | Active member coached by Coach Ananya Roy |
-| **MEMBER** | `member3@gymkhana.com` | `Member@123` | Member with 1-month basic pass without assigned trainer |
-
----
-
-## 4. System Requirements
+## 3. System Requirements
 
 - **Node.js**: `v18.0.0` or higher (Tested on `v24.20.0`)
 - **npm**: `v9.0.0` or higher (Tested on `v11.19.0`)
@@ -55,7 +41,7 @@ The seed script loads realistic demo accounts with pre-hashed passwords. Quick-f
 
 ---
 
-## 5. Local Installation & Setup Walkthrough
+## 4. Local Installation & Setup Walkthrough
 
 ### Step 1: Clone or Navigate to Project
 ```bash
@@ -113,7 +99,7 @@ Navigate to **`http://localhost:5173`** to access the live application.
 
 ---
 
-## 6. Database Architecture & Entity Relationships
+## 5. Database Architecture & Entity Relationships
 
 The schema consists of 11 normalized tables with foreign keys:
 
@@ -155,7 +141,7 @@ The schema consists of 11 normalized tables with foreign keys:
 
 ---
 
-## 7. REST API Endpoints Overview
+## 6. REST API Endpoints Overview
 
 All endpoints follow uniform JSON envelopes:
 - Success: `{ "success": true, "data": { ... }, "message": "optional" }`
@@ -199,7 +185,7 @@ All endpoints follow uniform JSON envelopes:
 
 ---
 
-## 8. Frontend Feature Matrix & User Roles
+## 7. Frontend Feature Matrix & User Roles
 
 ### A. Public Visitors (No Login Required)
 - **Home**: Hero banner, value proposition, live preview cards of exercise library, equipment catalog, featured workout splits, coaching highlights, and membership comparison.
@@ -240,7 +226,7 @@ All endpoints follow uniform JSON envelopes:
 
 ---
 
-## 9. Deployment Guide (Vercel + Cloud MySQL)
+## 8. Deployment Guide (Vercel + Cloud MySQL)
 
 The repository was structured for deployment from day one without hardcoding `localhost`.
 
@@ -270,7 +256,7 @@ The repository was structured for deployment from day one without hardcoding `lo
 
 ---
 
-## 10. Assumptions & Known Limitations
+## 9. Assumptions & Known Limitations
 
 1. **Payment Processing**: This academic field project intentionally does not simulate or pretend to process real credit card payments via Stripe/Razorpay. Membership tier selection submits an enrollment request to the database, where the administrator verifies and activates the membership.
 2. **Session Storage**: JWT tokens are stored in `localStorage` for seamless browser persistence across tab reloads. For high-stakes enterprise banking applications, HTTP-only Secure cookies with CSRF tokens would be preferred.
@@ -278,7 +264,7 @@ The repository was structured for deployment from day one without hardcoding `lo
 
 ---
 
-## 11. Common Troubleshooting
+## 10. Common Troubleshooting
 
 | Issue | Cause | Solution |
 | :--- | :--- | :--- |
@@ -289,7 +275,7 @@ The repository was structured for deployment from day one without hardcoding `lo
 
 ---
 
-## 12. Verification & Automated Test Results
+## 11. Verification & Automated Test Results
 
 The backend contains an automated regression test script (`backend/test-e2e.js`) validating all 36 core API interactions:
 ```bash
